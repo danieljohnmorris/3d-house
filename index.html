@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Isometric Rooms</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; color: #e0e0e0; font-family: system-ui, sans-serif; overflow: hidden; }
+    canvas { display: block; }
+
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+      display: flex; justify-content: center; gap: 0;
+      padding: 1.2rem 1rem;
+    }
+    nav a {
+      padding: 0.6rem 1.5rem;
+      text-decoration: none;
+      color: rgba(255,255,255,0.4);
+      font-size: 0.85rem;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transition: color 0.3s, background 0.3s;
+      border-bottom: 2px solid transparent;
+    }
+    nav a:hover { color: rgba(255,255,255,0.7); }
+    nav a.active {
+      color: #fff;
+      border-bottom-color: rgba(255,255,255,0.6);
+    }
+
+    .room-label {
+      position: fixed;
+      bottom: 3rem;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 1rem;
+      font-weight: 300;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+      color: rgba(255,255,255,0.5);
+      z-index: 10;
+    }
+    .room-label.visible { opacity: 1; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="#" data-room="0" class="active">Work</a>
+    <a href="#" data-room="1">Living</a>
+    <a href="#" data-room="2">Studio</a>
+    <a href="#" data-room="3">Garden</a>
+  </nav>
+  <div class="room-label" id="label"></div>
+  <canvas id="scene"></canvas>
+
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    // --- Setup ---
+    const canvas = document.getElementById('scene');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+
+    // Isometric orthographic camera
+    const aspect = window.innerWidth / window.innerHeight;
+    const viewSize = 10;
+    const camera = new THREE.OrthographicCamera(
+      -viewSize * aspect, viewSize * aspect,
+      viewSize, -viewSize,
+      0.1, 100
+    );
+    camera.position.set(10, 10, 10);
+    camera.lookAt(0, 0, 0);
+
+    // --- Lights ---
+    const ambient = new THREE.AmbientLight(0x8899bb, 0.6);
+    scene.add(ambient);
+
+    const sun = new THREE.DirectionalLight(0xffeedd, 1.2);
+    sun.position.set(8, 15, 5);
+    sun.castShadow = true;
+    sun.shadow.mapSize.width = 2048;
+    sun.shadow.mapSize.height = 2048;
+    sun.shadow.camera.left = -15;
+    sun.shadow.camera.right = 15;
+    sun.shadow.camera.top = 15;
+    sun.shadow.camera.bottom = -15;
+    sun.shadow.bias = -0.002;
+    scene.add(sun);
+
+    const fill = new THREE.DirectionalLight(0x6688aa, 0.3);
+    fill.position.set(-5, 5, -5);
+    scene.add(fill);
+
+    // --- Materials ---
+    const mat = {
+      floor: new THREE.MeshStandardMaterial({ color: 0xd4c5a9, roughness: 0.8 }),
+      wall: new THREE.MeshStandardMaterial({ color: 0xe8ddd0, roughness: 0.9 }),
+      wallAlt: new THREE.MeshStandardMaterial({ color: 0xd0d8e0, roughness: 0.9 }),
+      wallWarm: new THREE.MeshStandardMaterial({ color: 0xe0d0c0, roughness: 0.9 }),
+      wood: new THREE.MeshStandardMaterial({ color: 0x8b6f47, roughness: 0.7 }),
+      woodDark: new THREE.MeshStandardMaterial({ color: 0x5a4030, roughness: 0.7 }),
+      woodLight: new THREE.MeshStandardMaterial({ color: 0xc4a87a, roughness: 0.6 }),
+      metal: new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.3, metalness: 0.8 }),
+      black: new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.5 }),
+      white: new THREE.MeshStandardMaterial({ color: 0xf0f0f0, roughness: 0.6 }),
+      screen: new THREE.MeshStandardMaterial({ color: 0x3388cc, roughness: 0.2, emissive: 0x112244, emissiveIntensity: 0.5 }),
+      fabric: new THREE.MeshStandardMaterial({ color: 0x6a7a8a, roughness: 0.95 }),
+      fabricWarm: new THREE.MeshStandardMaterial({ color: 0xc47a50, roughness: 0.95 }),
+      cushion: new THREE.MeshStandardMaterial({ color: 0xcc8855, roughness: 0.9 }),
+      plant: new THREE.MeshStandardMaterial({ color: 0x3a7a3a, roughness: 0.85 }),
+      plantDark: new THREE.MeshStandardMaterial({ color: 0x2a5a2a, roughness: 0.85 }),
+      pot: new THREE.MeshStandardMaterial({ color: 0xb07050, roughness: 0.8 }),
+      canvas: new THREE.MeshStandardMaterial({ color: 0xf5f0e8, roughness: 0.7 }),
+      paint1: new THREE.MeshStandardMaterial({ color: 0xcc4444, roughness: 0.6 }),
+      paint2: new THREE.MeshStandardMaterial({ color: 0x4466aa, roughness: 0.6 }),
+      grass: new THREE.MeshStandardMaterial({ color: 0x5a8a4a, roughness: 0.9 }),
+      stone: new THREE.MeshStandardMaterial({ color: 0x999088, roughness: 0.85 }),
+      water: new THREE.MeshStandardMaterial({ color: 0x5588aa, roughness: 0.1, metalness: 0.3, transparent: true, opacity: 0.7 }),
+      flower1: new THREE.MeshStandardMaterial({ color: 0xdd5577, roughness: 0.8 }),
+      flower2: new THREE.MeshStandardMaterial({ color: 0xeeaa33, roughness: 0.8 }),
+      flower3: new THREE.MeshStandardMaterial({ color: 0x8855cc, roughness: 0.8 }),
+    };
+
+    // --- Helpers ---
+    function box(w, h, d, material) {
+      const g = new THREE.BoxGeometry(w, h, d);
+      const m = new THREE.Mesh(g, material);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      return m;
+    }
+
+    function cyl(rTop, rBot, h, segs, material) {
+      const g = new THREE.CylinderGeometry(rTop, rBot, h, segs);
+      const m = new THREE.Mesh(g, material);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      return m;
+    }
+
+    // --- Room shell (floor + 2 walls in L-shape at -x and -z) ---
+    // Furniture goes against these walls. Open corner faces +x, +z (local).
+    // Each room is rotated so its walls face the center of the diamond.
+    function createRoomShell(wallMat) {
+      const room = new THREE.Group();
+
+      const floor = box(5, 0.15, 5, mat.floor);
+      floor.position.y = -0.075;
+      floor.receiveShadow = true;
+      room.add(floor);
+
+      // Wall along x-axis (at -z side)
+      const backWall = box(5, 4, 0.15, wallMat);
+      backWall.position.set(0, 1.925, -2.425);
+      room.add(backWall);
+
+      // Wall along z-axis (at -x side)
+      const leftWall = box(0.15, 4, 5, wallMat);
+      leftWall.position.set(-2.425, 1.925, 0);
+      room.add(leftWall);
+
+      return room;
+    }
+
+    // --- Room 0: Work / Office ---
+    function createWorkRoom() {
+      const room = createRoomShell(mat.wall);
+
+      // Desk against -z wall
+      const deskTop = box(2.2, 0.08, 1, mat.woodLight);
+      deskTop.position.set(0.3, 1.0, -1.5);
+      room.add(deskTop);
+      for (const [x, z] of [[-0.7, -1.9], [1.3, -1.9], [-0.7, -1.1], [1.3, -1.1]]) {
+        const leg = box(0.06, 1.0, 0.06, mat.metal);
+        leg.position.set(x, 0.5, z);
+        room.add(leg);
+      }
+
+      // Monitor
+      const monitorScreen = box(1.0, 0.65, 0.04, mat.screen);
+      monitorScreen.position.set(0.3, 1.7, -1.7);
+      room.add(monitorScreen);
+      const monitorStand = box(0.06, 0.35, 0.06, mat.metal);
+      monitorStand.position.set(0.3, 1.22, -1.7);
+      room.add(monitorStand);
+      const monitorBase = box(0.4, 0.03, 0.25, mat.metal);
+      monitorBase.position.set(0.3, 1.05, -1.65);
+      room.add(monitorBase);
+
+      // Keyboard
+      const keyboard = box(0.6, 0.03, 0.2, mat.black);
+      keyboard.position.set(0.3, 1.06, -1.35);
+      room.add(keyboard);
+
+      // Chair
+      const chairSeat = box(0.6, 0.08, 0.6, mat.fabric);
+      chairSeat.position.set(0.3, 0.65, -0.6);
+      room.add(chairSeat);
+      const chairBack = box(0.6, 0.6, 0.08, mat.fabric);
+      chairBack.position.set(0.3, 1.0, -0.85);
+      room.add(chairBack);
+      const chairLeg = cyl(0.03, 0.03, 0.65, 8, mat.metal);
+      chairLeg.position.set(0.3, 0.325, -0.6);
+      room.add(chairLeg);
+      const chairBase = cyl(0.25, 0.25, 0.03, 8, mat.metal);
+      chairBase.position.set(0.3, 0.02, -0.6);
+      room.add(chairBase);
+
+      // Bookshelf against -x wall
+      const shelf = box(0.3, 2.5, 1.2, mat.woodDark);
+      shelf.position.set(-2.1, 1.25, 0.5);
+      room.add(shelf);
+      for (let i = 0; i < 4; i++) {
+        const bookColors = [0xcc4444, 0x4466aa, 0x44aa66, 0xaaaa44];
+        const bookMat = new THREE.MeshStandardMaterial({ color: bookColors[i], roughness: 0.8 });
+        const book = box(0.15, 0.35, 0.08 + Math.random() * 0.04, bookMat);
+        book.position.set(-2.05, 2.2, 0.15 + i * 0.25);
+        room.add(book);
+      }
+
+      // Plant on desk
+      const potD = cyl(0.12, 0.1, 0.2, 8, mat.pot);
+      potD.position.set(1.1, 1.14, -1.6);
+      room.add(potD);
+      const plantD = cyl(0.01, 0.15, 0.3, 6, mat.plant);
+      plantD.position.set(1.1, 1.39, -1.6);
+      room.add(plantD);
+
+      // Rug
+      const rug = box(2, 0.02, 1.5, mat.fabricWarm);
+      rug.position.set(0.3, 0.01, -0.2);
+      room.add(rug);
+
+      return room;
+    }
+
+    // --- Room 1: Living Room ---
+    function createLivingRoom() {
+      const room = createRoomShell(mat.wallWarm);
+
+      // Sofa against -z wall
+      const sofaBase = box(2.0, 0.5, 0.8, mat.fabric);
+      sofaBase.position.set(0, 0.35, -1.6);
+      room.add(sofaBase);
+      const sofaBack = box(2.0, 0.5, 0.15, mat.fabric);
+      sofaBack.position.set(0, 0.7, -1.925);
+      room.add(sofaBack);
+      const sofaArmL = box(0.15, 0.35, 0.8, mat.fabric);
+      sofaArmL.position.set(-0.925, 0.525, -1.6);
+      room.add(sofaArmL);
+      const sofaArmR = box(0.15, 0.35, 0.8, mat.fabric);
+      sofaArmR.position.set(0.925, 0.525, -1.6);
+      room.add(sofaArmR);
+
+      // Cushions
+      const c1 = box(0.4, 0.25, 0.1, mat.cushion);
+      c1.position.set(-0.5, 0.72, -1.7);
+      c1.rotation.x = -0.2;
+      room.add(c1);
+      const c2 = box(0.4, 0.25, 0.1, mat.cushion);
+      c2.position.set(0.5, 0.72, -1.7);
+      c2.rotation.x = -0.15;
+      room.add(c2);
+
+      // Coffee table
+      const tableTop = box(1.0, 0.06, 0.6, mat.woodLight);
+      tableTop.position.set(0, 0.45, -0.5);
+      room.add(tableTop);
+      for (const [x, z] of [[-0.4, -0.7], [0.4, -0.7], [-0.4, -0.3], [0.4, -0.3]]) {
+        const tl = box(0.05, 0.42, 0.05, mat.woodLight);
+        tl.position.set(x, 0.21, z);
+        room.add(tl);
+      }
+
+      // TV against -x wall
+      const tv = box(0.06, 0.8, 1.4, mat.black);
+      tv.position.set(-2.2, 1.8, 0);
+      room.add(tv);
+      const tvScreen = box(0.02, 0.7, 1.3, mat.screen);
+      tvScreen.position.set(-2.15, 1.8, 0);
+      room.add(tvScreen);
+      const tvStand = box(0.4, 0.5, 1.6, mat.woodDark);
+      tvStand.position.set(-2.05, 0.25, 0);
+      room.add(tvStand);
+
+      // Floor lamp
+      const lampBase = cyl(0.15, 0.15, 0.03, 12, mat.metal);
+      lampBase.position.set(1.8, 0.015, -1.8);
+      room.add(lampBase);
+      const lampPole = cyl(0.025, 0.025, 1.8, 8, mat.metal);
+      lampPole.position.set(1.8, 0.9, -1.8);
+      room.add(lampPole);
+      const lampShade = cyl(0.25, 0.15, 0.3, 12, mat.white);
+      lampShade.position.set(1.8, 1.95, -1.8);
+      room.add(lampShade);
+
+      // Rug
+      const rug = box(2.5, 0.02, 2, new THREE.MeshStandardMaterial({ color: 0x8a7060, roughness: 0.95 }));
+      rug.position.set(0, 0.01, -0.8);
+      room.add(rug);
+
+      // Plant in open corner
+      const potL = cyl(0.2, 0.15, 0.35, 8, mat.pot);
+      potL.position.set(1.8, 0.175, 1.5);
+      room.add(potL);
+      const plantL = cyl(0.02, 0.25, 0.5, 6, mat.plant);
+      plantL.position.set(1.8, 0.6, 1.5);
+      room.add(plantL);
+
+      return room;
+    }
+
+    // --- Room 2: Studio / Creative ---
+    function createStudioRoom() {
+      const room = createRoomShell(mat.wallAlt);
+
+      // Easel near corner of walls
+      const easelLeg1 = box(0.04, 1.8, 0.04, mat.wood);
+      easelLeg1.position.set(-1.5, 0.9, -1.2);
+      easelLeg1.rotation.x = -0.1;
+      room.add(easelLeg1);
+      const easelLeg2 = box(0.04, 1.8, 0.04, mat.wood);
+      easelLeg2.position.set(-1.2, 0.9, -1.2);
+      easelLeg2.rotation.x = -0.1;
+      room.add(easelLeg2);
+      const easelBar = box(0.5, 0.04, 0.04, mat.wood);
+      easelBar.position.set(-1.35, 1.2, -1.3);
+      room.add(easelBar);
+
+      // Canvas on easel
+      const canv = box(0.8, 0.6, 0.03, mat.canvas);
+      canv.position.set(-1.35, 1.6, -1.35);
+      room.add(canv);
+      const blob1 = box(0.25, 0.2, 0.01, mat.paint1);
+      blob1.position.set(-1.5, 1.65, -1.32);
+      room.add(blob1);
+      const blob2 = box(0.2, 0.25, 0.01, mat.paint2);
+      blob2.position.set(-1.2, 1.55, -1.32);
+      room.add(blob2);
+
+      // Drafting table
+      const draftTop = box(1.8, 0.06, 1.0, mat.woodLight);
+      draftTop.position.set(0.5, 1.0, -1.2);
+      draftTop.rotation.x = -0.15;
+      room.add(draftTop);
+      for (const [x, z] of [[-0.3, -1.6], [1.3, -1.6], [-0.3, -0.8], [1.3, -0.8]]) {
+        const dl = box(0.05, 1.0, 0.05, mat.metal);
+        dl.position.set(x, 0.5, z);
+        room.add(dl);
+      }
+
+      // Stool
+      const stoolSeat = cyl(0.25, 0.25, 0.06, 12, mat.woodDark);
+      stoolSeat.position.set(0.5, 0.75, -0.2);
+      room.add(stoolSeat);
+      const stoolLeg = cyl(0.03, 0.03, 0.72, 8, mat.metal);
+      stoolLeg.position.set(0.5, 0.36, -0.2);
+      room.add(stoolLeg);
+
+      // Art on -z wall
+      const frame1 = box(0.8, 0.6, 0.04, mat.woodDark);
+      frame1.position.set(0.8, 2.2, -2.32);
+      room.add(frame1);
+      const art1 = box(0.65, 0.45, 0.02, new THREE.MeshStandardMaterial({ color: 0xdd8844, roughness: 0.6 }));
+      art1.position.set(0.8, 2.2, -2.3);
+      room.add(art1);
+
+      // Supplies shelf on -x wall
+      const supShelf = box(0.25, 0.04, 1.0, mat.wood);
+      supShelf.position.set(-2.2, 1.5, 1.0);
+      room.add(supShelf);
+      for (let i = 0; i < 5; i++) {
+        const tubeColors = [0xcc3333, 0x3366cc, 0x33aa33, 0xcccc33, 0xcc33cc];
+        const tubeMat = new THREE.MeshStandardMaterial({ color: tubeColors[i], roughness: 0.6 });
+        const tube = cyl(0.03, 0.03, 0.15, 6, tubeMat);
+        tube.position.set(-2.2, 1.6, 0.65 + i * 0.18);
+        tube.rotation.z = Math.PI / 2;
+        room.add(tube);
+      }
+
+      // Large plant in open corner
+      const potS = cyl(0.25, 0.2, 0.4, 8, mat.pot);
+      potS.position.set(1.8, 0.2, 1.5);
+      room.add(potS);
+      const plantS = cyl(0.02, 0.3, 0.6, 6, mat.plantDark);
+      plantS.position.set(1.8, 0.7, 1.5);
+      room.add(plantS);
+
+      return room;
+    }
+
+    // --- Room 3: Garden ---
+    function createGardenRoom() {
+      const room = new THREE.Group();
+
+      // Grass floor
+      const grass = box(5, 0.15, 5, mat.grass);
+      grass.position.y = -0.075;
+      grass.receiveShadow = true;
+      room.add(grass);
+
+      // Low stone walls (L-shape at -x, -z)
+      const backWall = box(5, 1.5, 0.3, mat.stone);
+      backWall.position.set(0, 0.75, -2.35);
+      room.add(backWall);
+      const leftWall = box(0.3, 1.5, 5, mat.stone);
+      leftWall.position.set(-2.35, 0.75, 0);
+      room.add(leftWall);
+
+      // Raised planter bed against -z wall
+      const planter = box(2, 0.5, 1, mat.wood);
+      planter.position.set(-0.5, 0.25, -1.5);
+      room.add(planter);
+      const soil = box(1.85, 0.1, 0.85, new THREE.MeshStandardMaterial({ color: 0x5a4030, roughness: 1 }));
+      soil.position.set(-0.5, 0.55, -1.5);
+      room.add(soil);
+      for (let i = 0; i < 6; i++) {
+        const flowerMats = [mat.flower1, mat.flower2, mat.flower3];
+        const stem = cyl(0.015, 0.015, 0.3 + Math.random() * 0.2, 4, mat.plant);
+        const fx = -1.2 + i * 0.35 + (Math.random() - 0.5) * 0.1;
+        const fz = -1.5 + (Math.random() - 0.5) * 0.5;
+        stem.position.set(fx, 0.75, fz);
+        room.add(stem);
+        const head = cyl(0.06, 0.06, 0.05, 8, flowerMats[i % 3]);
+        head.position.set(fx, 0.95 + Math.random() * 0.1, fz);
+        room.add(head);
+      }
+
+      // Small pond
+      const pond = cyl(0.7, 0.7, 0.08, 16, mat.water);
+      pond.position.set(1.2, 0.04, 0.5);
+      room.add(pond);
+      const pondRim = new THREE.Mesh(
+        new THREE.RingGeometry(0.65, 0.75, 16),
+        mat.stone
+      );
+      pondRim.rotation.x = -Math.PI / 2;
+      pondRim.position.set(1.2, 0.09, 0.5);
+      room.add(pondRim);
+
+      // Bench
+      const benchSeat = box(1.2, 0.08, 0.4, mat.woodLight);
+      benchSeat.position.set(-1.5, 0.55, 1.0);
+      room.add(benchSeat);
+      for (const x of [-2.0, -1.0]) {
+        const bl = box(0.08, 0.55, 0.08, mat.woodLight);
+        bl.position.set(x, 0.275, 0.85);
+        room.add(bl);
+        const bl2 = box(0.08, 0.55, 0.08, mat.woodLight);
+        bl2.position.set(x, 0.275, 1.15);
+        room.add(bl2);
+      }
+
+      // Tree
+      const trunk = cyl(0.12, 0.15, 1.2, 8, mat.woodDark);
+      trunk.position.set(1.5, 0.6, -1.0);
+      room.add(trunk);
+      const foliage = new THREE.Mesh(
+        new THREE.SphereGeometry(0.7, 8, 6),
+        mat.plant
+      );
+      foliage.position.set(1.5, 1.6, -1.0);
+      foliage.castShadow = true;
+      room.add(foliage);
+
+      // Stepping stones
+      for (const [x, z] of [[0.2, 0.3], [0.5, 0.8], [0.7, 1.3]]) {
+        const st = cyl(0.15, 0.15, 0.04, 8, mat.stone);
+        st.position.set(x, 0.02, z);
+        st.receiveShadow = true;
+        room.add(st);
+      }
+
+      // Watering can
+      const canBody = cyl(0.12, 0.1, 0.2, 8, mat.metal);
+      canBody.position.set(-0.8, 0.1, 0.8);
+      room.add(canBody);
+
+      return room;
+    }
+
+    // --- Build rooms in 2x2 diamond ---
+    // Each room has walls at local -x and -z.
+    // Rooms are placed in a 2x2 grid and rotated so walls face center.
+    // Camera at (+x,+y,+z) sees the front room's open corner.
+    //
+    // Layout (top-down, camera at bottom-right):
+    //   Room2 (-x,-z)  |  Room3 (+x,-z)
+    //   ----------------+----------------
+    //   Room1 (-x,+z)  |  Room0 (+x,+z)  <-- faces camera
+    //
+    const roomBuilders = [createWorkRoom, createLivingRoom, createStudioRoom, createGardenRoom];
+    const roomLabels = ['Work', 'Living', 'Studio', 'Garden'];
+    const roomPivot = new THREE.Group();
+    scene.add(roomPivot);
+
+    const rooms = [];
+    const halfRoom = 2.5; // half of room size
+
+    // Position and rotation for each room in the diamond.
+    // rotation compensates so that when pivot brings room to front,
+    // its effective rotation = 0 (open corner faces camera).
+    const roomConfigs = [
+      { x:  halfRoom, z:  halfRoom, rot: 0 },              // Room 0: front-right
+      { x: -halfRoom, z:  halfRoom, rot: -Math.PI / 2 },   // Room 1: front-left
+      { x: -halfRoom, z: -halfRoom, rot: -Math.PI },        // Room 2: back-left
+      { x:  halfRoom, z: -halfRoom, rot: -3 * Math.PI / 2 }, // Room 3: back-right
+    ];
+
+    roomBuilders.forEach((builder, i) => {
+      const room = builder();
+      const cfg = roomConfigs[i];
+      room.position.set(cfg.x, 0, cfg.z);
+      room.rotation.y = cfg.rot;
+      roomPivot.add(room);
+      rooms.push(room);
+    });
+
+    // --- Navigation ---
+    let currentRoom = 0;
+    let targetAngle = 0;
+    let currentAngle = 0;
+    const label = document.getElementById('label');
+    const links = document.querySelectorAll('nav a');
+
+    function showLabel(index) {
+      label.textContent = roomLabels[index];
+      label.classList.remove('visible');
+      setTimeout(() => label.classList.add('visible'), 300);
+    }
+
+    function goToRoom(index) {
+      if (index === currentRoom) return;
+      links[currentRoom].classList.remove('active');
+      currentRoom = index;
+      links[currentRoom].classList.add('active');
+
+      // Target angle to bring this room to front
+      const newTarget = index * Math.PI / 2;
+      // Shortest rotation path
+      let diff = newTarget - targetAngle;
+      while (diff > Math.PI) diff -= 2 * Math.PI;
+      while (diff < -Math.PI) diff += 2 * Math.PI;
+      targetAngle += diff;
+
+      showLabel(index);
+    }
+
+    links.forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        goToRoom(parseInt(link.dataset.room));
+      });
+    });
+
+    showLabel(0);
+
+    // --- Animate ---
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+
+      // Smooth rotation
+      const diff = targetAngle - currentAngle;
+      currentAngle += diff * (1 - Math.exp(-5 * dt));
+      roomPivot.rotation.y = currentAngle;
+
+      // Gentle bob
+      const time = clock.getElapsedTime();
+      roomPivot.position.y = Math.sin(time * 0.5) * 0.05;
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // --- Keyboard nav ---
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        goToRoom((currentRoom + 1) % rooms.length);
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        goToRoom((currentRoom - 1 + rooms.length) % rooms.length);
+      }
+    });
+
+    // --- Resize ---
+    window.addEventListener('resize', () => {
+      const a = window.innerWidth / window.innerHeight;
+      camera.left = -viewSize * a;
+      camera.right = viewSize * a;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
